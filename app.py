@@ -1,3 +1,4 @@
+import os
 import pickle
 import numpy as np
 from flask import Flask, render_template, request, jsonify
@@ -5,15 +6,20 @@ from flask import Flask, render_template, request, jsonify
 app = Flask(__name__)
 
 # Load the AdaBoost Model
+MODEL_PATH = 'Adaboost_model.pkl'
+model = None
+
 try:
-    with open('Adaboost_model.pkl', 'rb') as f:
-        model = pickle.load(f)
-    print("AdaBoost model loaded successfully.")
+    if os.path.exists(MODEL_PATH):
+        with open(MODEL_PATH, 'rb') as f:
+            model = pickle.load(f)
+        print("AdaBoost Model loaded successfully.")
+    else:
+        print(f"Warning: '{MODEL_PATH}' not found in current directory.")
 except Exception as e:
     print(f"Error loading model: {e}")
-    model = None
 
-# Input feature configuration details
+# Exact features reconstructed from model metadata
 FEATURE_CONFIG = {
     "Age": {"type": "number", "min": 18, "max": 100, "default": 35, "step": 1, "unit": "years"},
     "Gender": {"type": "select", "options": [0, 1], "labels": ["Female", "Male"], "default": 0},
@@ -28,16 +34,19 @@ FEATURE_CONFIG = {
 }
 
 @app.route('/')
-def home():
-    return render_template('index.html', feature_config=FEATURE_CONFIG)
+def index():
+    # Pass zip to template context for options/labels loop
+    return render_template('index.html', feature_config=FEATURE_CONFIG, zip=zip)
 
 @app.route('/predict', methods=['POST'])
 def predict():
     if model is None:
-        return jsonify({'error': 'Model file not loaded properly on server'}), 500
-    
+        return jsonify({'error': 'Model not loaded on server. Ensure Adaboost_model.pkl exists.'}), 500
+
     try:
-        data = request.json
+        data = request.json or {}
+        
+        # Extract features in the exact expected order
         features = [
             float(data.get('Age', 35)),
             float(data.get('Gender', 0)),
@@ -50,32 +59,30 @@ def predict():
             float(data.get('Total Spend', 1200)),
             float(data.get('Last Interaction', 7))
         ]
-        
+
         input_array = np.array([features])
         
-        # Make Prediction
+        # Execute prediction
         prediction = int(model.predict(input_array)[0])
         probabilities = model.predict_proba(input_array)[0].tolist()
-        
-        # Calculate AdaBoost Feature Importances
+
+        # Extract feature importances
         if hasattr(model, 'feature_importances_'):
             feature_importances = model.feature_importances_.tolist()
         else:
-            feature_importances = [0.1] * 10
-            
-        feature_names = list(FEATURE_CONFIG.keys())
-        
-        response = {
+            feature_importances = [0.1] * len(FEATURE_CONFIG)
+
+        return jsonify({
+            'success': True,
             'prediction': prediction,
             'probabilities': probabilities,
+            'feature_names': list(FEATURE_CONFIG.keys()),
             'feature_importances': feature_importances,
-            'feature_names': feature_names,
-            'inputs': data
-        }
-        return jsonify(response)
-        
+            'estimator_count': len(getattr(model, 'estimators_', [])) or 50
+        })
+
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
