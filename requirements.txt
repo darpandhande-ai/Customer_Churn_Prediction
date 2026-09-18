@@ -1,4 +1,4 @@
 Flask
-scikit-learn
 numpy
+scikit-learn
 gunicorn
